@@ -35,6 +35,7 @@
 #include <QTimer>
 #include <QByteArray>
 #include <QNetworkRequest>
+#include <QNetworkProxy>
 #include "CutyCapt.hpp"
 
 #if QT_VERSION >= 0x040600 && 0
@@ -160,10 +161,11 @@ CutyPage::setAttribute(QWebSettings::WebAttribute option,
 // TODO: Consider merging some of main() and CutyCap
 
 CutyCapt::CutyCapt(CutyPage* page, const QString& output, int delay, OutputFormat format,
-                   const QString& scriptProp, const QString& scriptCode) {
+                   const QString& scriptProp, const QString& scriptCode, bool insecure) {
   mPage = page;
   mOutput = output;
   mDelay = delay;
+  mInsecure = insecure;
   mSawInitialLayout = false;
   mSawDocumentComplete = false;
   mFormat = format;
@@ -237,6 +239,15 @@ CutyCapt::Delayed() {
 }
 
 void
+CutyCapt::handleSslErrors(QNetworkReply* reply, QList<QSslError> errors) {
+  if (mInsecure) {
+    reply->ignoreSslErrors();
+  } else {
+    // TODO: what to do here instead of hanging?
+  }
+}
+
+void
 CutyCapt::saveSnapshot() {
   QWebFrame *mainFrame = mPage->mainFrame();
   QPainter painter;
@@ -277,7 +288,7 @@ CutyCapt::saveSnapshot() {
       break;
     }
 #if QT_VERSION < 0x050000
-    case RenderTreeFormat:
+    case RenderTreeFormat: {
       QFile file(mOutput);
       file.open(QIODevice::WriteOnly | QIODevice::Text);
       QTextStream s(&file);
@@ -352,6 +363,7 @@ CaptHelp(void) {
     "  --expect-alert=<string>        Try waiting for alert(string) before capture \n"
     "  --debug-print-alerts           Prints out alert(...) strings for debugging. \n"
 #endif
+    "  --insecure                     Ignore SSL/TLS certificate errors            \n"
     " -----------------------------------------------------------------------------\n"
     "  <f> is svg,ps,pdf,itext,html,rtree,png,jpeg,mng,tiff,gif,bmp,ppm,xbm,xpm    \n"
     " -----------------------------------------------------------------------------\n"
@@ -376,6 +388,7 @@ main(int argc, char *argv[]) {
   int argHelp = 0;
   int argDelay = 0;
   int argSilent = 0;
+  int argInsecure = 0;
   int argMinWidth = 800;
   int argMinHeight = 600;
   int argMaxWait = 90000;
@@ -419,6 +432,10 @@ main(int argc, char *argv[]) {
 
     } else if (strcmp("--verbose", s) == 0) {
       argVerbosity++;
+      continue;
+
+    } else if (strcmp("--insecure", s) == 0) {
+      argInsecure = 1;
       continue;
 
 #if CUTYCAPT_SCRIPT
@@ -613,7 +630,7 @@ main(int argc, char *argv[]) {
     }
   }
 
-  CutyCapt main(&page, argOut, argDelay, format, scriptProp, scriptCode);
+  CutyCapt main(&page, argOut, argDelay, format, scriptProp, scriptCode, !!argInsecure);
 
   app.connect(&page,
     SIGNAL(loadFinished(bool)),
@@ -666,6 +683,11 @@ main(int argc, char *argv[]) {
     &main,
     SLOT(JavaScriptWindowObjectCleared()));
 #endif
+
+  app.connect(page.networkAccessManager(),
+    SIGNAL(sslErrors(QNetworkReply*, QList<QSslError>)),
+    &main,
+    SLOT(handleSslErrors(QNetworkReply*, QList<QSslError>)));
 
   if (!body.isNull())
     page.mainFrame()->load(req, method, body);
